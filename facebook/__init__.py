@@ -477,6 +477,16 @@ class AsyncGraphAPI(GraphAPI):
         return url + string
 
     @gen.coroutine
+    def get_app_access_token(self, app_id, app_secret):
+        """Get the application's access token as a string."""
+        args = {'grant_type': 'client_credentials',
+                'client_id': app_id,
+                'client_secret': app_secret}
+
+        result = yield self.request("oauth/access_token", args=args)
+        raise Return(result["access_token"])
+
+    @gen.coroutine
     def request(self, path, args=None, post_args=None, files=None, method="GET"):
         args = args or {}
 
@@ -491,9 +501,9 @@ class AsyncGraphAPI(GraphAPI):
 
         def callback(data, error=None):
             if error is not None:
-                raise Return(error.body)
+                return error.body
             else:
-                raise Return(data)
+                return data
 
         url = FACEBOOK_GRAPH_URL + path
         url = self.format_get_url(url, args) if method == 'GET' else url
@@ -502,5 +512,22 @@ class AsyncGraphAPI(GraphAPI):
         else:
             response = yield self.http.fetch(url, callback, method=method,
                                            body=post_args)
+        headers = response.headers
+        if 'text/javascript' in headers['Content-Type']:
+            result = json.loads(response.body)
 
-        raise Return(json.loads(response.body))
+        elif "access_token" in parse_qs(response.body):
+            query_str = parse_qs(response.body)
+            if "access_token" in query_str:
+                result = {"access_token": query_str["access_token"][0]}
+                if "expires" in query_str:
+                    result["expires"] = query_str["expires"][0]
+            else:
+                raise GraphAPIError(json.loads(response.body))
+        else:
+            raise GraphAPIError('Maintype was not text, image, or querystring')
+
+        if result and isinstance(result, dict) and result.get("error"):
+            raise GraphAPIError(result)
+
+        raise Return(result)
