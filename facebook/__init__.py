@@ -22,6 +22,10 @@ implement Facebook authentication. Read more about the Graph API at
 http://developers.facebook.com/docs/api.
 
 """
+from tornado.httpclient import AsyncHTTPClient
+from tornado import gen
+from tornado.gen import Return
+from tornado.ioloop import IOLoop
 
 import hashlib
 import hmac
@@ -454,3 +458,49 @@ def auth_url(app_id, canvas_url, perms=None, **kwargs):
         kvps['scope'] = ",".join(perms)
     kvps.update(kwargs)
     return url + urlencode(kvps)
+
+
+class AsyncGraphAPI(GraphAPI):
+
+    def __init__(self, access_token=None, timeout=None, version=None):
+        if version is None:
+            version = VALID_API_VERSIONS[-1]
+
+        GraphAPI.__init__(self, access_token=access_token, timeout=timeout, version=version)
+        self.http = AsyncHTTPClient()
+
+    @staticmethod
+    def format_get_url(url, args):
+        string = '?'
+        for k in args.keys():
+            string = "{0}{1}={2}&".format(string, k, args[k])
+        return url + string
+
+    @gen.coroutine
+    def request(self, path, args=None, post_args=None, files=None, method="GET"):
+        args = args or {}
+
+        if post_args is not None:
+            method = "POST"
+
+        if self.access_token:
+            if post_args is not None:
+                post_args["access_token"] = self.access_token
+            else:
+                args["access_token"] = self.access_token
+
+        def callback(data, error=None):
+            if error is not None:
+                raise Return(error.body)
+            else:
+                raise Return(data)
+
+        url = FACEBOOK_GRAPH_URL + path
+        url = self.format_get_url(url, args) if method == 'GET' else url
+        if method == 'GET':
+            response = yield self.http.fetch(url, callback)
+        else:
+            response = yield self.http.fetch(url, callback, method=method,
+                                           body=post_args)
+
+        raise Return(json.loads(response.body))
